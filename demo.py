@@ -4,6 +4,7 @@ Copyright (C) 2019 NVIDIA Corporation.  All rights reserved.
 Licensed under the CC BY-NC-SA 4.0 license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode).
 """
 
+from external.ActivityNet.Evaluation.get_ava_performance import read_labelmap
 import os
 import sys
 import torch
@@ -33,7 +34,9 @@ def main():
 
     ################## Customize your configuratons here ###################
 
-    checkpoint_path = 'pretrained/ava_step.pth'
+    #this portion is where the ML will do its inference and caption the frames
+
+    checkpoint_path = '/content/STEP/ava_step.pth'
     if os.path.isfile(checkpoint_path):
         print ("Loading pretrain model from %s" % checkpoint_path)
         map_location = 'cuda:0'
@@ -43,17 +46,29 @@ def main():
         raise ValueError("Pretrain model not found!", checkpoint_path)
 
     # TODO: Set data_root to the customized input dataset
-    args.data_root = '/datasets/demo/frames/'
+    args.data_root = '/content/STEP/datasets/demo/frames/'
     args.save_root = os.path.join(os.path.dirname(args.data_root), 'results/')
     if not os.path.isdir(args.save_root):
         os.makedirs(args.save_root)
 
     # TODO: modify this setting according to the actual frame rate and file name
-    source_fps = 30
-    im_format = 'frame%04d.jpg'
+    source_fps = 25
+    im_format = 'frame%05d.jpg'
     conf_thresh = 0.4
     global_thresh = 0.8    # used for cross-class NMS
     
+    label_dict = {}
+    if args.num_classes == 60:
+        label_map = os.path.join(args.data_root, 'ava_action_list_v2.1_for_activitynet_2018.pbtxt')
+        categories, class_whitelist = read_labelmap(open(label_map, 'r'))
+        classes = [(val['id'], val['name']) for val in categories]
+        id2class = {c[0]: c[1] for c in classes}    # gt class id (1~80) --> class name
+        for i, c in enumerate(sorted(list(class_whitelist))):
+            label_dict[i] = c
+    else:
+        for i in range(80):
+            label_dict[i] = i+1
+
     ################ Define models #################
 
     gpu_count = torch.cuda.device_count()
@@ -94,8 +109,10 @@ def main():
     
     ################ DataLoader setup #################
 
+    batch_size = 1
+
     dataset = CustomizedDataset(args.data_root, args.T, args.NUM_CHUNKS[args.max_iter], source_fps, args.fps, BaseTransform(args.image_size, args.means, args.stds,args.scale_norm), anchor_mode=args.anchor_mode, im_format=im_format)
-    dataloader = torch.utils.data.DataLoader(dataset, args.batch_size, num_workers=args.num_workers,
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size, num_workers=2,
                                   shuffle=False, collate_fn=detection_collate, pin_memory=True)
 
     ################ Inference #################
